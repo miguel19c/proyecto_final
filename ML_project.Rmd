@@ -1,0 +1,110 @@
+---
+title: "Machine Learning Final Project"
+author: "Miguel Sanchez"
+date: "5 de mayo de 2018"
+output:
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,fig.path = "images/")
+```
+## Synopsis
+The goal of this analysis is to predict the classe variable in the testing set. The classe variable  indicates the way in which the person performs the exercise. To do this task We will take into account information on accelerometers that provide us 159 variables. We use a Random Forest as model and we estimate the model error using  a cross validation with k=10.
+
+## Loading the database 
+```{r libraries}
+#install.packages('RCurl')
+#install.packages('purrr')
+#install.packages("rlang", type = "source")
+#install.packages('caret',dependencies=T)
+#install.packages('randomForest')
+library(RCurl)
+library(rlang)
+library(caret)
+library(purrr)
+library(randomForest)
+```
+```{r data_tr}
+url_test='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+url_train='https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+test=read.csv(textConnection(getURL(url_test)))
+train=read.csv(textConnection(getURL(url_train)))
+```
+
+## Exploratory Data analysis
+We have two datasets: training and testing. Training set has 19622 samples and 159 variables and classe as a response variable. In other hand, test set has 20 samples and 159 variables and we need to estimate the response variable for each sample. As we can see that the response variable has 5 levels, A, B, C, D and E and the total number of samples per level is shown below.
+```{r eda}
+dim(test)
+dim(train)
+summary(train$classe)
+```
+First of all, we will check if the data base has missing values and white values.
+
+```{r ifnavalues}
+num_na=sapply(train, function(x) sum(is.na(x)))
+num_white=sapply(train,function(x) sum(as.numeric(x=="")))
+num_white[is.na(num_white)]<-1000
+num_na
+```
+We notice that there are variables that all values are NA,other variables that the largest amount are white spaces. For this reason, we delete such variables in test and training set and we will only work with complete measurements of accelerometers.
+```{r delete_na}
+aux=as.numeric(num_na>0)+as.numeric(num_white>100)
+var_na=names(train[aux>0])
+train_wna=train[-match(var_na,names(train))]
+test_wna=test[-match(var_na,names(train))]
+train_wna=train_wna[,-c(1:8)]#non informative variables
+test_wna=test_wna[,-c(1:8)]
+dim(train_wna)
+```
+To delete redundant variables, we use PCA.
+```{r pressure}
+train_pca=prcomp(train_wna[,-52],center=TRUE,scale.=TRUE)
+plot(train_pca$sdev)
+
+```
+In the previous graph we can see that after the tenth principal component the contributions are minimal. So, we use 10 principal components and a random forest model. In the next table we see the prediction for the testing response variable.
+```{r model_complete}
+#Aplying PCA and only we consider four components
+preproc_complete=prcomp(train_wna[,-52],rank. = 10,center=TRUE,scale. = TRUE)
+train_complete=predict(preproc_complete,train_wna[,-52])
+testing_complete=predict(preproc_complete,test_wna[,-52])
+#Creating the model
+mod_complete=randomForest(train_wna[,52]~.,data=train_complete)
+y_complete=predict(mod_complete,testing_complete)
+y_complete
+```
+
+To estimate the sampling error of the model we will use a cross validation with k = 10. So, in the first iteration we choose the first partition and we create the model. We use the model for predict the response variable of the remaining data and we estimate the sample error. We do the same with the following folds.Then, we averaged the sample errors obtained in each iteration and we will take that as model error.
+
+```{r cv}
+set.seed(12345)
+part=createDataPartition(train_wna$classe,times=10,p=0.90,list = TRUE)
+
+i=1
+j=dim(train_wna)[2]-1
+error=rep(0,10)
+for( i in 1:10)
+{
+train_x=train_wna[part[[i]],1:j]
+train_y=train_wna[part[[i]],j+1]
+valid_x=train_wna[-part[[i]],1:j]
+valid_y=train_wna[-part[[i]],j+1]
+
+#Aplying PCA and only we consider four components
+preproc=prcomp(train_x,rank. = 10,center=TRUE,scale. = TRUE)
+train_pca=predict(preproc,train_x)
+valid_pca=predict(preproc,valid_x)
+#Creating the model
+mod=randomForest(train_y~.,data=train_pca)
+pred_y=predict(mod,valid_pca)
+error[i]=sum(pred_y!=valid_y)/length(valid_y)
+}
+error
+mean(error)*100
+```
+
+
+So, the model error is around 3.52% and thus the accuracy of the model is 96.48%.
+
